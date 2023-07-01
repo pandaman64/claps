@@ -1,8 +1,30 @@
+#[derive(Debug, Clone)]
+pub enum BinOp {
+    Add,
+    Minus,
+    Mul,
+    Greater,
+}
+
+impl BinOp {
+    fn from_str(op: &str) -> Self {
+        match op {
+            "+" => Self::Add,
+            "-" => Self::Minus,
+            "*" => Self::Mul,
+            ">" => Self::Greater,
+            _ => panic!("unknown operator {}", op),
+        }
+    }
+}
+
 #[rust_sitter::grammar("claps")]
 mod grammar {
+    use crate::BinOp;
+
     #[rust_sitter::language]
     #[derive(Debug)]
-    pub struct Language {
+    pub struct Program {
         pub definitions: Vec<Definition>,
     }
 
@@ -33,21 +55,28 @@ mod grammar {
             #[rust_sitter::leaf(pattern = r"\d+", transform = |s| s.parse().unwrap())]
             value: i64,
         },
-        #[rust_sitter::prec_left(1)]
+        #[rust_sitter::prec_left(2)]
+        Greater {
+            left: Box<Expr>,
+            #[rust_sitter::leaf(pattern = r">", transform = BinOp::from_str)]
+            _op: BinOp,
+            right: Box<Expr>,
+        },
+        #[rust_sitter::prec_left(3)]
         Add {
             left: Box<Expr>,
-            #[rust_sitter::leaf(text = "+")]
-            _op: (),
+            #[rust_sitter::leaf(pattern = r"\+|-", transform = BinOp::from_str)]
+            op: BinOp,
             right: Box<Expr>,
         },
-        #[rust_sitter::prec_left(2)]
+        #[rust_sitter::prec_left(4)]
         Mul {
             left: Box<Expr>,
-            #[rust_sitter::leaf(text = "*")]
-            _op: (),
+            #[rust_sitter::leaf(pattern = r"\*", transform = BinOp::from_str)]
+            _op: BinOp,
             right: Box<Expr>,
         },
-        #[rust_sitter::prec(3)]
+        #[rust_sitter::prec(5)]
         Call {
             fun: Box<Expr>,
             #[rust_sitter::leaf(text = "(")]
@@ -68,6 +97,23 @@ mod grammar {
             _semicolon: (),
             body: Box<Expr>,
         },
+        If {
+            #[rust_sitter::leaf(text = "if")]
+            _if: (),
+            cond: Box<Expr>,
+            #[rust_sitter::leaf(text = "{")]
+            _open_then_body: (),
+            then_branch: Box<Expr>,
+            #[rust_sitter::leaf(text = "}")]
+            _close_then_body: (),
+            #[rust_sitter::leaf(text = "else")]
+            _else: (),
+            #[rust_sitter::leaf(text = "{")]
+            _open_else_body: (),
+            else_branch: Box<Expr>,
+            #[rust_sitter::leaf(text = "}")]
+            _close_else_body: (),
+        },
     }
 
     #[derive(Debug, Clone)]
@@ -83,111 +129,39 @@ mod grammar {
     }
 }
 
-mod interp {
-    use std::{collections::HashMap, rc::Rc};
+mod interp;
 
-    use crate::grammar::*;
-
-    #[derive(Debug)]
-    pub struct Env<'p> {
-        pub parent: Option<&'p Env<'p>>,
-        pub vars: HashMap<String, Value>,
-    }
-
-    impl Env<'_> {
-        fn lookup(&self, var: &str) -> Option<&Value> {
-            self.vars.get(var).or_else(|| self.parent?.lookup(var))
-        }
-    }
-
-    #[derive(Debug, Clone)]
-    pub enum Value {
-        Number(i64),
-        Fun { params: Vec<String>, body: Rc<Expr> },
-    }
-
-    pub fn run(env: &Env, expr: &Expr) -> Value {
-        match expr {
-            Expr::Var(var) => env
-                .lookup(&var.ident)
-                .unwrap_or_else(|| panic!("variable {} not found", var.ident))
-                .clone(),
-            Expr::Number { value } => Value::Number(*value),
-            Expr::Add { left, _op, right } => {
-                let left = run(env, left);
-                let right = run(env, right);
-                match (left, right) {
-                    (Value::Number(left), Value::Number(right)) => Value::Number(left + right),
-                    _ => panic!("type error"),
-                }
-            }
-            Expr::Mul { left, _op, right } => {
-                let left = run(env, left);
-                let right = run(env, right);
-                match (left, right) {
-                    (Value::Number(left), Value::Number(right)) => Value::Number(left * right),
-                    _ => panic!("type error"),
-                }
-            }
-            Expr::Call {
-                fun,
-                args,
-                ..
-            } => {
-                let fun = run(env, fun);
-                let args = args.iter().map(|arg| run(env, arg)).collect::<Vec<_>>();
-                match fun {
-                    Value::Fun { params, body } => {
-                        assert!(params.len() == args.len());
-                        let new_env = Env {
-                            parent: Some(env),
-                            vars: params.into_iter().zip(args).collect(),
-                        };
-                        run(&new_env, &body)
-                    }
-                    _ => panic!("type error"),
-                }
-            }
-            Expr::Let {
-                name,
-                value,
-                body,
-                ..
-            } => {
-                let value = run(env, value);
-                let new_env = Env {
-                    parent: Some(env),
-                    vars: HashMap::from([(name.ident.clone(), value)]),
-                };
-                run(&new_env, body)
-            }
-        }
+fn main() {
+    let program = grammar::parse(r#"
+fun is_odd(x) {
+    if x > 0 {
+        is_even(x - 1)
+    } else {
+        1 > 0
     }
 }
 
-use std::{collections::HashMap, rc::Rc};
+fun is_even(x) {
+    if x > 0 {
+        is_odd(x - 1)
+    } else {
+        0 > 1
+    }
+}
 
-fn main() {
-    let program = grammar::parse("fun main() { let x = 1 + 2 * 3; x }").unwrap();
+fun square(x) {
+    x * x
+}
+
+fun main() {
+    let x = 1 + 2 * 3;
+    if is_even(x) {
+        square(x)
+    } else {
+        x
+    }
+}
+"#).unwrap();
     // println!("{:#?}", program);
-    let env = interp::Env {
-        parent: None,
-        // bind each top-level function to its function name
-        vars: HashMap::from_iter(program.definitions.iter().map(|def| match def {
-            grammar::Definition::Fun { name, args, body, .. } => (
-                name.ident.clone(),
-                interp::Value::Fun {
-                    params: args.iter().map(|arg| arg.ident.clone()).collect(),
-                    body: Rc::new(body.clone()),
-                },
-            ),
-        })),
-    };
-    let result = interp::run(&env, &grammar::Expr::Call {
-        fun: Box::new(grammar::Expr::Var(grammar::Ident { ident: "main".to_string() })),
-        args: vec![],
-        _open_paren: (),
-        _close_paren: (),
-    });
-    println!("{:?}", result);
+    println!("{:?}", interp::run(&program));
 }
