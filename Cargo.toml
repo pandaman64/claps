@@ -6,3 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+rust-sitter = "0.3.4"
+
+[build-dependencies]
+rust-sitter-tool = "0.3.4"
