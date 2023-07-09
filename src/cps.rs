@@ -48,6 +48,8 @@ pub struct Converter {
     ident_generator: IdentGenerator,
 }
 
+type ConversionCont<'a> = Box<dyn FnOnce(&mut Converter, CValue) -> CExpr + 'a>;
+
 impl Converter {
     pub fn new(ident_generator: IdentGenerator) -> Self {
         Self { ident_generator }
@@ -73,10 +75,13 @@ impl Converter {
                 // Continuation for this function
                 let fun_cont_var = self.fresh_var("k_fun");
 
-                let body = self.convert_expr(body, |_, body| CExpr::App {
-                    fun: CValue::Var(fun_cont_var.clone()),
-                    args: vec![body],
-                });
+                let body = self.convert_expr(
+                    body,
+                    Box::new(|_, body| CExpr::App {
+                        fun: CValue::Var(fun_cont_var.clone()),
+                        args: vec![body],
+                    }),
+                );
 
                 CDefinition {
                     name: name.clone(),
@@ -91,11 +96,7 @@ impl Converter {
         }
     }
 
-    fn convert_expr<F: FnOnce(&mut Converter, CValue) -> CExpr>(
-        &mut self,
-        expr: &Expr,
-        cont: F,
-    ) -> CExpr {
+    fn convert_expr(&mut self, expr: &Expr, cont: ConversionCont<'_>) -> CExpr {
         match expr {
             Expr::Var(ident) => cont(self, CValue::Var(ident.clone())),
             Expr::Number { value } => cont(self, CValue::Int(*value)),
@@ -111,9 +112,12 @@ impl Converter {
                         args: vec![call_cont_arg.clone()],
                         body: cont(self, CValue::Var(call_cont_arg)),
                     }],
-                    body: Box::new(self.convert_expr(fun, move |this, fun| {
-                        this.convert_call(fun, CValue::Var(call_cont_var), args, vec![])
-                    })),
+                    body: Box::new(self.convert_expr(
+                        fun,
+                        Box::new(move |this, fun| {
+                            this.convert_call(fun, CValue::Var(call_cont_var), args, vec![])
+                        }),
+                    )),
                 }
             }
             Expr::Let {
@@ -128,25 +132,31 @@ impl Converter {
         }
     }
 
-    fn convert_binop<F: FnOnce(&mut Converter, CValue) -> CExpr>(
+    fn convert_binop(
         &mut self,
         op: BinOp,
         left: &Expr,
         right: &Expr,
-        cont: F,
+        cont: ConversionCont<'_>,
     ) -> CExpr {
-        self.convert_expr(left, move |this, left| {
-            this.convert_expr(right, move |this, right| {
-                let var = this.fresh_var(op.var_prefix());
-                CExpr::PrimOp(PrimOp::BinOp {
-                    op,
-                    left,
+        self.convert_expr(
+            left,
+            Box::new(move |this, left| {
+                this.convert_expr(
                     right,
-                    var: var.clone(),
-                    cont: Box::new(cont(this, CValue::Var(var))),
-                })
-            })
-        })
+                    Box::new(move |this, right| {
+                        let var = this.fresh_var(op.var_prefix());
+                        CExpr::PrimOp(PrimOp::BinOp {
+                            op,
+                            left,
+                            right,
+                            var: var.clone(),
+                            cont: Box::new(cont(this, CValue::Var(var))),
+                        })
+                    }),
+                )
+            }),
+        )
     }
 
     fn convert_call(
@@ -164,19 +174,22 @@ impl Converter {
                     args_accum
                 },
             },
-            [arg, rest @ ..] => self.convert_expr(arg, move |this, arg| {
-                args_accum.push(arg);
-                this.convert_call(fun, k_call, rest, args_accum)
-            }),
+            [arg, rest @ ..] => self.convert_expr(
+                arg,
+                Box::new(move |this, arg| {
+                    args_accum.push(arg);
+                    this.convert_call(fun, k_call, rest, args_accum)
+                }),
+            ),
         }
     }
 
-    fn convert_let<F: FnOnce(&mut Converter, CValue) -> CExpr>(
+    fn convert_let(
         &mut self,
         name: &Ident,
         value: &Expr,
         body: &Expr,
-        cont: F,
+        cont: ConversionCont<'_>,
     ) -> CExpr {
         CExpr::Fix {
             defs: vec![{
@@ -184,54 +197,61 @@ impl Converter {
                 CDefinition {
                     name: name.clone(),
                     args: vec![let_cont_arg.clone()],
-                    body: self.convert_expr(value, move |_, value| CExpr::App {
-                        fun: CValue::Var(let_cont_arg),
-                        args: vec![value],
-                    }),
+                    body: self.convert_expr(
+                        value,
+                        Box::new(move |_, value| CExpr::App {
+                            fun: CValue::Var(let_cont_arg),
+                            args: vec![value],
+                        }),
+                    ),
                 }
             }],
             body: Box::new(self.convert_expr(body, cont)),
         }
     }
 
-    fn convert_if<F: FnOnce(&mut Converter, CValue) -> CExpr>(
+    fn convert_if(
         &mut self,
         cond: &Expr,
         then_branch: &Expr,
         else_branch: &Expr,
-        cont: F,
+        cont: ConversionCont<'_>,
     ) -> CExpr {
-        self.convert_expr(cond, move |this, cond| {
-            // Define a continuation function that takes a boolean and passes it to the given cont.
-            // NOTE: we need to introduce a new variable to bound the size of converted form.
-            let cont_var = this.fresh_var("k_if");
-            let cont_arg = this.fresh_var("k_if_arg");
-            let k = CDefinition {
-                name: cont_var.clone(),
-                args: vec![cont_arg.clone()],
-                body: cont(this, CValue::Var(cont_arg)),
-            };
+        self.convert_expr(
+            cond,
+            Box::new(move |this, cond| {
+                // Define a continuation function that takes a boolean and passes it to the given cont.
+                // NOTE: we need to introduce a new variable to bound the size of converted form.
+                let cont_var = this.fresh_var("k_if");
+                let cont_arg = this.fresh_var("k_if_arg");
+                let k = CDefinition {
+                    name: cont_var.clone(),
+                    args: vec![cont_arg.clone()],
+                    body: cont(this, CValue::Var(cont_arg)),
+                };
 
-            // Introduced the continuation function, and let each branch call it with the result.
-            CExpr::Fix {
-                defs: vec![k],
-                body: Box::new(CExpr::If {
-                    cond,
-                    then_branch: Box::new(this.convert_expr(then_branch, {
-                        let cont_var = cont_var.clone();
-                        move |_, then_branch| CExpr::App {
-                            fun: CValue::Var(cont_var),
-                            args: vec![then_branch],
-                        }
-                    })),
-                    else_branch: Box::new(this.convert_expr(else_branch, move |_, else_branch| {
-                        CExpr::App {
-                            fun: CValue::Var(cont_var),
-                            args: vec![else_branch],
-                        }
-                    })),
-                }),
-            }
-        })
+                // Introduced the continuation function, and let each branch call it with the result.
+                CExpr::Fix {
+                    defs: vec![k],
+                    body: Box::new(CExpr::If {
+                        cond,
+                        then_branch: Box::new(this.convert_expr(then_branch, {
+                            let cont_var = cont_var.clone();
+                            Box::new(move |_, then_branch| CExpr::App {
+                                fun: CValue::Var(cont_var),
+                                args: vec![then_branch],
+                            })
+                        })),
+                        else_branch: Box::new(this.convert_expr(
+                            else_branch,
+                            Box::new(move |_, else_branch| CExpr::App {
+                                fun: CValue::Var(cont_var),
+                                args: vec![else_branch],
+                            }),
+                        )),
+                    }),
+                }
+            }),
+        )
     }
 }

@@ -155,8 +155,8 @@ fun main() {
     let mut ident_generator = IdentGenerator::default();
 
     let (toplevel_map, program) = ast::alpha_conversion(&mut ident_generator, &program);
-    println!("{:?}", program);
+    println!("{:#?}", program);
 
     let cps_definitions = cps::Converter::new(ident_generator).convert(&program);
-    println!("{:?}", cps_definitions);
+    println!("{:#?}", cps_definitions);
 }

@@ -111,9 +111,9 @@ pub fn alpha_conversion<'ident>(
         .definitions
         .iter()
         .map(|def| match def {
-            crate::grammar::Definition::Fun {
-                name, ..
-            } => (name, generator.fresh_var(&name.ident)),
+            crate::grammar::Definition::Fun { name, .. } => {
+                (name, generator.fresh_var(&name.ident))
+            }
         })
         .collect();
     let env = Env { parent: None, vars };
