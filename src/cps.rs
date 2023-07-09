@@ -1,11 +1,7 @@
-use crate::grammar::{Definition, Expr, Program};
-
-#[derive(Debug, Clone)]
-pub struct Ident(String, usize);
+use crate::ast::{BinOp, Definition, Expr, Ident, IdentGenerator, Program};
 
 #[derive(Debug)]
 pub enum CValue {
-    Boolean(bool),
     Int(i64),
     Var(Ident),
     Label(Ident),
@@ -39,7 +35,7 @@ pub enum CExpr {
 #[derive(Debug)]
 pub enum PrimOp {
     BinOp {
-        op: crate::BinOp,
+        op: BinOp,
         left: CValue,
         right: CValue,
         var: Ident,
@@ -47,17 +43,18 @@ pub enum PrimOp {
     },
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Converter {
-    pub next_var: usize,
-    pub next_label: usize,
+    ident_generator: IdentGenerator,
 }
 
 impl Converter {
+    pub fn new(ident_generator: IdentGenerator) -> Self {
+        Self { ident_generator }
+    }
+
     fn fresh_var(&mut self, prefix: &str) -> Ident {
-        let var = Ident(format!("{}{}", prefix, self.next_var), self.next_var);
-        self.next_var += 1;
-        var
+        self.ident_generator.fresh_var(prefix)
     }
 
     pub fn convert(&mut self, program: &Program) -> Vec<CDefinition> {
@@ -82,9 +79,9 @@ impl Converter {
                 });
 
                 CDefinition {
-                    name: todo!(),
+                    name: name.clone(),
                     args: {
-                        let mut args: Vec<_> = args.iter().map(|arg| todo!()).collect();
+                        let mut args: Vec<_> = args.clone();
                         args.push(fun_cont_var);
                         args
                     },
@@ -100,11 +97,9 @@ impl Converter {
         cont: F,
     ) -> CExpr {
         match expr {
-            Expr::Var(ident) => cont(self, CValue::Var(todo!())),
+            Expr::Var(ident) => cont(self, CValue::Var(ident.clone())),
             Expr::Number { value } => cont(self, CValue::Int(*value)),
-            Expr::Greater { left, op, right }
-            | Expr::Add { left, op, right }
-            | Expr::Mul { left, op, right } => self.convert_binop(*op, left, right, cont),
+            Expr::BinOp { left, op, right } => self.convert_binop(*op, left, right, cont),
             Expr::Call { fun, args, .. } => {
                 // Define a continuation function that takes the result of the function call and passes it to the given cont.
                 let call_cont_var = self.fresh_var("k_call");
@@ -123,7 +118,7 @@ impl Converter {
             }
             Expr::Let {
                 name, value, body, ..
-            } => self.convert_let(todo!(), value, body, cont),
+            } => self.convert_let(name, value, body, cont),
             Expr::If {
                 cond,
                 then_branch,
@@ -135,7 +130,7 @@ impl Converter {
 
     fn convert_binop<F: FnOnce(&mut Converter, CValue) -> CExpr>(
         &mut self,
-        op: crate::BinOp,
+        op: BinOp,
         left: &Expr,
         right: &Expr,
         cont: F,
@@ -189,7 +184,7 @@ impl Converter {
                 CDefinition {
                     name: name.clone(),
                     args: vec![let_cont_arg.clone()],
-                    body: self.convert_expr(value, move |this, value| CExpr::App {
+                    body: self.convert_expr(value, move |_, value| CExpr::App {
                         fun: CValue::Var(let_cont_arg),
                         args: vec![value],
                     }),

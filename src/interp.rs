@@ -1,6 +1,6 @@
 use std::{collections::HashMap, rc::Rc};
 
-use crate::{grammar::*, BinOp};
+use crate::{ast::BinOp, grammar::*};
 
 #[derive(Debug)]
 pub struct Env<'p> {

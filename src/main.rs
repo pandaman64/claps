@@ -1,35 +1,8 @@
-#[derive(Debug, Clone, Copy)]
-pub enum BinOp {
-    Add,
-    Minus,
-    Mul,
-    Greater,
-}
-
-impl BinOp {
-    fn from_str(op: &str) -> Self {
-        match op {
-            "+" => Self::Add,
-            "-" => Self::Minus,
-            "*" => Self::Mul,
-            ">" => Self::Greater,
-            _ => panic!("unknown operator {}", op),
-        }
-    }
-
-    fn var_prefix(&self) -> &'static str {
-        match self {
-            Self::Add => "add",
-            Self::Minus => "minus",
-            Self::Mul => "mul",
-            Self::Greater => "greater",
-        }
-    }
-}
+use crate::ast::IdentGenerator;
 
 #[rust_sitter::grammar("claps")]
 mod grammar {
-    use crate::BinOp;
+    use crate::ast::BinOp;
 
     #[rust_sitter::language]
     #[derive(Debug)]
@@ -125,7 +98,7 @@ mod grammar {
         },
     }
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
     pub struct Ident {
         #[rust_sitter::leaf(pattern = "[a-zA-Z_][a-zA-Z0-9_]*", transform = str::to_string)]
         pub ident: String,
@@ -138,6 +111,7 @@ mod grammar {
     }
 }
 
+mod ast;
 mod cps;
 mod interp;
 
@@ -178,8 +152,11 @@ fun main() {
     // println!("{:#?}", program);
     println!("{:?}", interp::run(&program));
 
-    // TODO: alpha-conversion
+    let mut ident_generator = IdentGenerator::default();
 
-    let cps_definitions = cps::Converter::default().convert(&program);
+    let (toplevel_map, program) = ast::alpha_conversion(&mut ident_generator, &program);
+    println!("{:?}", program);
+
+    let cps_definitions = cps::Converter::new(ident_generator).convert(&program);
     println!("{:?}", cps_definitions);
 }
