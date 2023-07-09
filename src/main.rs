@@ -1,4 +1,4 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum BinOp {
     Add,
     Minus,
@@ -14,6 +14,15 @@ impl BinOp {
             "*" => Self::Mul,
             ">" => Self::Greater,
             _ => panic!("unknown operator {}", op),
+        }
+    }
+
+    fn var_prefix(&self) -> &'static str {
+        match self {
+            Self::Add => "add",
+            Self::Minus => "minus",
+            Self::Mul => "mul",
+            Self::Greater => "greater",
         }
     }
 }
@@ -59,7 +68,7 @@ mod grammar {
         Greater {
             left: Box<Expr>,
             #[rust_sitter::leaf(pattern = r">", transform = BinOp::from_str)]
-            _op: BinOp,
+            op: BinOp,
             right: Box<Expr>,
         },
         #[rust_sitter::prec_left(3)]
@@ -73,7 +82,7 @@ mod grammar {
         Mul {
             left: Box<Expr>,
             #[rust_sitter::leaf(pattern = r"\*", transform = BinOp::from_str)]
-            _op: BinOp,
+            op: BinOp,
             right: Box<Expr>,
         },
         #[rust_sitter::prec(5)]
@@ -129,10 +138,12 @@ mod grammar {
     }
 }
 
+mod cps;
 mod interp;
 
 fn main() {
-    let program = grammar::parse(r#"
+    let program = grammar::parse(
+        r#"
 fun is_odd(x) {
     if x > 0 {
         is_even(x - 1)
@@ -161,7 +172,14 @@ fun main() {
         x
     }
 }
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     // println!("{:#?}", program);
     println!("{:?}", interp::run(&program));
+
+    // TODO: alpha-conversion
+
+    let cps_definitions = cps::Converter::default().convert(&program);
+    println!("{:?}", cps_definitions);
 }

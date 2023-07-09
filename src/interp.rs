@@ -28,7 +28,11 @@ pub fn eval(env: &Env, expr: &Expr) -> Value {
             .unwrap_or_else(|| panic!("variable {} not found", var.ident))
             .clone(),
         Expr::Number { value } => Value::Number(*value),
-        Expr::Greater { left, _op, right } => {
+        Expr::Greater {
+            left,
+            op: _op,
+            right,
+        } => {
             let left = eval(env, left);
             let right = eval(env, right);
             match (left, right) {
@@ -48,7 +52,11 @@ pub fn eval(env: &Env, expr: &Expr) -> Value {
                 _ => panic!("type error"),
             }
         }
-        Expr::Mul { left, _op, right } => {
+        Expr::Mul {
+            left,
+            op: _op,
+            right,
+        } => {
             let left = eval(env, left);
             let right = eval(env, right);
             match (left, right) {
@@ -56,11 +64,7 @@ pub fn eval(env: &Env, expr: &Expr) -> Value {
                 _ => panic!("type error"),
             }
         }
-        Expr::Call {
-            fun,
-            args,
-            ..
-        } => {
+        Expr::Call { fun, args, .. } => {
             let fun = eval(env, fun);
             let args = args.iter().map(|arg| eval(env, arg)).collect::<Vec<_>>();
             match fun {
@@ -76,10 +80,7 @@ pub fn eval(env: &Env, expr: &Expr) -> Value {
             }
         }
         Expr::Let {
-            name,
-            value,
-            body,
-            ..
+            name, value, body, ..
         } => {
             let value = eval(env, value);
             let new_env = Env {
@@ -109,7 +110,9 @@ pub fn run(program: &Program) -> Value {
         parent: None,
         // bind each top-level function to its function name
         vars: HashMap::from_iter(program.definitions.iter().map(|def| match def {
-            Definition::Fun { name, args, body, .. } => (
+            Definition::Fun {
+                name, args, body, ..
+            } => (
                 name.ident.clone(),
                 Value::Fun {
                     params: args.iter().map(|arg| arg.ident.clone()).collect(),
@@ -118,10 +121,15 @@ pub fn run(program: &Program) -> Value {
             ),
         })),
     };
-    eval(&env, &Expr::Call {
-        fun: Box::new(Expr::Var(Ident { ident: "main".to_string() })),
-        args: vec![],
-        _open_paren: (),
-        _close_paren: (),
-    })
+    eval(
+        &env,
+        &Expr::Call {
+            fun: Box::new(Expr::Var(Ident {
+                ident: "main".to_string(),
+            })),
+            args: vec![],
+            _open_paren: (),
+            _close_paren: (),
+        },
+    )
 }
