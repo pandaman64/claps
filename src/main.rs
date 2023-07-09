@@ -114,6 +114,7 @@ mod grammar {
 mod ast;
 mod cps;
 mod interp;
+mod pretty;
 
 fn main() {
     let program = grammar::parse(
@@ -134,14 +135,14 @@ fun is_even(x) {
     }
 }
 
-fun square(x) {
-    x * x
+fun times(x, y) {
+    x * y
 }
 
 fun main() {
     let x = 1 + 2 * 3;
     if is_even(x) {
-        square(x)
+        times(x, x)
     } else {
         x
     }
@@ -155,8 +156,9 @@ fun main() {
     let mut ident_generator = IdentGenerator::default();
 
     let (toplevel_map, program) = ast::alpha_conversion(&mut ident_generator, &program);
-    println!("{:#?}", program);
+    // TODO: add breakable spaces and debug
+    println!("{}", pretty::format(100, &program.pretty()));
 
     let cps_definitions = cps::Converter::new(ident_generator).convert(&program);
-    println!("{:#?}", cps_definitions);
+    // println!("{:#?}", cps_definitions);
 }

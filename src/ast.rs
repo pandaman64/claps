@@ -1,4 +1,6 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, fmt::Display, rc::Rc};
+
+use crate::pretty::{Doc, Text};
 
 #[derive(Debug, Clone, Copy)]
 pub enum BinOp {
@@ -27,12 +29,34 @@ impl BinOp {
             Self::Greater => "greater",
         }
     }
+
+    fn pretty(&self) -> Text<'static> {
+        let text = match self {
+            Self::Add => &"+",
+            Self::Minus => &"-",
+            Self::Mul => &"*",
+            Self::Greater => &">",
+        };
+        Text::from_display(text)
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct Ident {
     original: Rc<str>,
     id: usize,
+}
+
+impl Ident {
+    fn pretty(&self) -> Text<'_> {
+        Text::from_display(self)
+    }
+}
+
+impl Display for Ident {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}@{}", self.original, self.id)
+    }
 }
 
 #[derive(Default, Debug)]
@@ -56,6 +80,19 @@ pub struct Program {
     pub definitions: Vec<Definition>,
 }
 
+impl Program {
+    pub fn pretty(&self) -> Doc<'_> {
+        Doc::group(Doc::seq({
+            let mut fragments = vec![];
+            for definition in self.definitions.iter() {
+                fragments.push(definition.pretty());
+                fragments.push(Doc::space());
+            }
+            fragments.into_iter()
+        }))
+    }
+}
+
 #[derive(Debug)]
 pub enum Definition {
     Fun {
@@ -63,6 +100,43 @@ pub enum Definition {
         args: Vec<Ident>,
         body: Expr,
     },
+}
+
+impl Definition {
+    fn pretty(&self) -> Doc<'_> {
+        match self {
+            Self::Fun { name, args, body } => Doc::group(Doc::seq({
+                [
+                    Doc::Text(Text::from_display(&"fun")),
+                    Doc::space(),
+                    Doc::Text(name.pretty()),
+                    Doc::Text(Text::from_display(&"(")),
+                    Doc::group(Doc::nest(
+                        4,
+                        Doc::seq({
+                            let mut arg_fragments = vec![];
+                            for (i, arg) in args.iter().enumerate() {
+                                arg_fragments.push(Doc::Text(arg.pretty()));
+                                if i != args.len() - 1 {
+                                    arg_fragments.push(Doc::Text(Text::from_display(&",")));
+                                    arg_fragments.push(Doc::space());
+                                }
+                            }
+                            arg_fragments.into_iter()
+                        }),
+                    )),
+                    Doc::Text(Text::from_display(&")")),
+                    Doc::space(),
+                    Doc::Text(Text::from_display(&"{")),
+                    Doc::space(), // TODO: hard break?
+                    Doc::group(Doc::nest(4, body.pretty())),
+                    Doc::space(), // TODO: hard break?
+                    Doc::Text(Text::from_display(&"}")),
+                ]
+                .into_iter()
+            })),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +164,100 @@ pub enum Expr {
         then_branch: Rc<Expr>,
         else_branch: Rc<Expr>,
     },
+}
+
+impl Expr {
+    fn pretty(&self) -> Doc<'_> {
+        match self {
+            Expr::Var(ident) => Doc::Text(ident.pretty()),
+            Expr::Number { value } => Doc::Text(Text::from_display(value)),
+            Expr::BinOp { left, op, right } => Doc::group(Doc::nest(
+                4,
+                Doc::seq(
+                    [
+                        left.pretty(),
+                        Doc::space(),
+                        Doc::Text(op.pretty()),
+                        Doc::space(),
+                        right.pretty(),
+                    ]
+                    .into_iter(),
+                ),
+            )),
+            Expr::Call { fun, args } => Doc::group(Doc::seq({
+                [
+                    fun.pretty(),
+                    Doc::Text(Text::from_display(&"(")),
+                    Doc::group(Doc::nest(
+                        4,
+                        Doc::seq({
+                            let mut arg_fragments = vec![];
+                            for (i, arg) in args.iter().enumerate() {
+                                arg_fragments.push(arg.pretty());
+                                if i + 1 < args.len() {
+                                    arg_fragments.push(Doc::Text(Text::from_display(&",")));
+                                    arg_fragments.push(Doc::space());
+                                }
+                            }
+                            arg_fragments.into_iter()
+                        }),
+                    )),
+                    Doc::Text(Text::from_display(&")")),
+                ]
+                .into_iter()
+            })),
+            Expr::Let { name, value, body } => Doc::group(Doc::seq({
+                [
+                    Doc::Text(Text::from_display(&"let")),
+                    Doc::space(),
+                    Doc::group(Doc::nest(
+                        4,
+                        Doc::seq(
+                            [
+                                Doc::Text(name.pretty()),
+                                Doc::space(),
+                                Doc::Text(Text::from_display(&"=")),
+                                Doc::space(),
+                                value.pretty(),
+                            ]
+                            .into_iter(),
+                        ),
+                    )),
+                    Doc::space(),
+                    Doc::Text(Text::from_display(&"in")),
+                    Doc::space(),
+                    body.pretty(),
+                ]
+                .into_iter()
+            })),
+            Expr::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => Doc::group(Doc::seq({
+                [
+                    Doc::Text(Text::from_display(&"if")),
+                    Doc::space(),
+                    Doc::group(Doc::nest(4, cond.pretty())),
+                    Doc::space(),
+                    Doc::Text(Text::from_display(&"{")),
+                    Doc::space(),
+                    Doc::group(Doc::nest(4, then_branch.pretty())),
+                    Doc::space(),
+                    Doc::Text(Text::from_display(&"}")),
+                    Doc::space(),
+                    Doc::Text(Text::from_display(&"else")),
+                    Doc::space(),
+                    Doc::Text(Text::from_display(&"{")),
+                    Doc::space(),
+                    Doc::group(Doc::nest(4, else_branch.pretty())),
+                    Doc::space(),
+                    Doc::Text(Text::from_display(&"}")),
+                ]
+                .into_iter()
+            })),
+        }
+    }
 }
 
 struct Env<'parent, 'ident> {
