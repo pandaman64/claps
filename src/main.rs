@@ -157,7 +157,7 @@ fun main() {
 
     let (toplevel_map, program) = ast::alpha_conversion(&mut ident_generator, &program);
     // TODO: add breakable spaces and debug
-    println!("{}", pretty::format(100, &program.pretty()));
+    println!("{}", program.pretty().to_string(80));
 
     let cps_definitions = cps::Converter::new(ident_generator).convert(&program);
     // println!("{:#?}", cps_definitions);

@@ -1,5 +1,167 @@
-//! Implementation of Wadler's pretty printer, following "Strictly Pretty" by Christian Lindig for strictness.
 use std::fmt::Write;
+
+pub struct DocSeq<'a> {
+    docs: Vec<Doc<'a>>,
+}
+
+impl<'a> From<Vec<Doc<'a>>> for DocSeq<'a> {
+    fn from(docs: Vec<Doc<'a>>) -> Self {
+        Self { docs }
+    }
+}
+
+impl<'a> FromIterator<Doc<'a>> for DocSeq<'a> {
+    fn from_iter<T: IntoIterator<Item = Doc<'a>>>(iter: T) -> Self {
+        Self {
+            docs: iter.into_iter().collect(),
+        }
+    }
+}
+
+impl DocSeq<'_> {
+    /// Check if the the sequence fits in the given width, when rendered in a single line.
+    fn fits(&self, width: usize) -> Result<usize, ()> {
+        let mut used = 0;
+        for doc in self.docs.iter() {
+            match doc {
+                Doc::Text(text) => used += text.length,
+                Doc::Breakable(text) => used += text.length,
+                Doc::Nest(_, seq) => used += seq.fits(width - used)?,
+                Doc::Group(seq) => used += seq.fits(width - used)?,
+            }
+            if used > width {
+                return Err(());
+            }
+        }
+        Ok(used)
+    }
+
+    fn do_format<W: Write>(
+        &self,
+        writer: &mut W,
+        width: usize,
+        initial_used: usize,
+        indent: usize,
+        mode: Mode,
+    ) -> Result<usize, std::fmt::Error> {
+        let mut used = initial_used;
+
+        for doc in self.docs.iter() {
+            match doc {
+                Doc::Text(text) => {
+                    write!(writer, "{}", text.text)?;
+                    used += text.length;
+                }
+                Doc::Breakable(text) => match mode {
+                    Mode::Flat => {
+                        write!(writer, "{}", text.text)?;
+                        used += text.length;
+                    }
+                    Mode::Break => {
+                        writeln!(writer)?;
+                        for _ in 0..indent {
+                            write!(writer, " ")?;
+                        }
+                        used = indent;
+                    }
+                },
+                Doc::Nest(i, seq) => {
+                    used = seq.do_format(writer, width, initial_used, indent + i, mode)?;
+                }
+                Doc::Group(seq) => {
+                    if used <= width && seq.fits(width - used).is_ok() {
+                        used = seq.do_format(writer, width, initial_used, indent, Mode::Flat)?;
+                    } else {
+                        used = seq.do_format(writer, width, initial_used, indent, Mode::Break)?;
+                    }
+                }
+            }
+        }
+
+        Ok(used)
+    }
+
+    pub fn format<W: Write>(&self, writer: &mut W, width: usize) -> Result<usize, std::fmt::Error> {
+        // Inline `Self(vec![Doc::Group(self.clone())]).do_format(writer, width, 0, 0, Mode::Flat)`.
+        if self.fits(width).is_ok() {
+            self.do_format(writer, width, 0, 0, Mode::Flat)
+        } else {
+            self.do_format(writer, width, 0, 0, Mode::Break)
+        }
+    }
+
+    pub fn to_string(&self, width: usize) -> String {
+        let mut ret = String::new();
+        // Writing to String doesn't fail.
+        self.format(&mut ret, width).unwrap();
+        ret
+    }
+}
+
+pub enum Doc<'a> {
+    Text(Text<'a>),
+    Breakable(Text<'a>),
+    Nest(usize, DocSeq<'a>),
+    Group(DocSeq<'a>),
+}
+
+impl<'a> Doc<'a> {
+    pub fn text(text: &'a &'static str) -> Self {
+        Self::Text(text.into())
+    }
+
+    pub fn display(text: &'a (dyn std::fmt::Display + 'a)) -> Self {
+        Self::Text(text.into())
+    }
+
+    pub fn breakable(text: impl Into<Text<'a>>) -> Self {
+        Self::Breakable(text.into())
+    }
+
+    pub fn space() -> Self {
+        Self::breakable(&" ")
+    }
+
+    pub fn nest(indent: usize, seq: impl Into<DocSeq<'a>>) -> Self {
+        Self::Nest(indent, seq.into())
+    }
+
+    pub fn group(seq: impl Into<DocSeq<'a>>) -> Self {
+        Self::Group(seq.into())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Flat,
+    Break,
+}
+
+#[derive(Clone, Copy)]
+pub struct Text<'a> {
+    pub length: usize,
+    pub text: &'a (dyn std::fmt::Display + 'a),
+}
+
+impl<'a> From<&'a &'static str> for Text<'a> {
+    fn from(text: &'a &'static str) -> Self {
+        Self {
+            length: text.len(),
+            text,
+        }
+    }
+}
+
+impl<'a> From<&'a (dyn std::fmt::Display + 'a)> for Text<'a> {
+    fn from(text: &'a (dyn std::fmt::Display + 'a)) -> Self {
+        let mut counter = ByteCounter::new();
+        write!(counter, "{}", text).unwrap();
+        Self {
+            length: counter.len(),
+            text,
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 struct ByteCounter {
@@ -23,152 +185,98 @@ impl std::fmt::Write for ByteCounter {
     }
 }
 
-#[derive(Clone)]
-pub enum List<T> {
-    Nil,
-    Cons(T, Box<List<T>>),
-}
+#[cfg(test)]
+mod test {
+    use super::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Mode {
-    Flat,
-    Break,
-}
-
-#[derive(Clone, Copy)]
-pub struct Text<'a> {
-    pub length: usize,
-    pub text: &'a (dyn std::fmt::Display + 'a),
-}
-
-impl<'a> Text<'a> {
-    pub fn from_display(text: &'a (dyn std::fmt::Display + 'a)) -> Self {
-        let mut counter = ByteCounter::new();
-        write!(counter, "{}", text).unwrap();
-        Self {
-            length: counter.len(),
-            text,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub enum Doc<'a> {
-    Nil,
-    Cons(Box<Doc<'a>>, Box<Doc<'a>>),
-    Nest(usize, Box<Doc<'a>>),
-    Text(Text<'a>),
-    Break(Text<'a>),
-    Group(Box<Doc<'a>>),
-}
-
-impl Doc<'_> {
-    pub fn nest(n: usize, doc: Doc<'_>) -> Doc<'_> {
-        Doc::Nest(n, Box::new(doc))
+    #[test]
+    fn test_simple() {
+        let doc = DocSeq::from(vec![
+            Doc::text(&"hello"),
+            Doc::space(),
+            Doc::text(&"world"),
+            Doc::space(),
+            Doc::text(&"foobar"),
+        ]);
+        assert_eq!(doc.to_string(80), "hello world foobar");
+        assert_eq!(doc.to_string(18), "hello world foobar");
+        assert_eq!(doc.to_string(17), "hello\nworld\nfoobar");
+        assert_eq!(doc.to_string(10), "hello\nworld\nfoobar");
     }
 
-    pub fn space() -> Doc<'static> {
-        Doc::Break(Text::from_display(&" "))
-    }
-
-    pub fn group(doc: Doc<'_>) -> Doc<'_> {
-        Doc::Group(Box::new(doc))
-    }
-
-    pub fn seq<'a, I: DoubleEndedIterator<Item = Doc<'a>>>(iter: I) -> Doc<'a> {
-        iter.rfold(Doc::Nil, |acc, doc| match (acc, doc) {
-            (Doc::Nil, doc) => doc,
-            (acc, Doc::Nil) => acc,
-            (acc, doc) => Doc::Cons(Box::new(doc), Box::new(acc)),
-        })
-    }
-}
-
-pub enum SDoc<'a> {
-    Nil,
-    Text(Text<'a>, Box<SDoc<'a>>),
-    Line(usize, Box<SDoc<'a>>),
-}
-
-impl std::fmt::Display for SDoc<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SDoc::Nil => Ok(()),
-            SDoc::Text(text, rest) => {
-                write!(f, "{}", text.text)?;
-                rest.fmt(f)
-            }
-            SDoc::Line(indent, rest) => {
-                writeln!(f)?;
-                for _ in 0..*indent {
-                    write!(f, " ")?;
-                }
-                rest.fmt(f)
-            }
-        }
-    }
-}
-
-fn fits(width: usize, used: usize, docs: List<(usize, Mode, &Doc<'_>)>) -> bool {
-    if used > width {
-        false
-    } else {
-        match docs {
-            List::Nil => true,
-            List::Cons(head, rest) => match head {
-                (_, _, Doc::Nil) => fits(width, used, *rest),
-                (i, m, Doc::Cons(a, b)) => fits(
-                    width,
-                    used,
-                    List::Cons((i, m, a), Box::new(List::Cons((i, m, b), rest))),
-                ),
-                (i, m, Doc::Nest(j, d)) => fits(width, used, List::Cons((i + j, m, d), rest)),
-                (_, _, Doc::Text(text)) => fits(width, used + text.length, *rest),
-                (i, Mode::Flat, Doc::Break(text)) => fits(width, i + text.length, *rest),
-                (_, Mode::Break, Doc::Break(_text)) => unreachable!(),
-                (i, _, Doc::Group(d)) => fits(width, used, List::Cons((i, Mode::Flat, d), rest)),
-            },
-        }
-    }
-}
-
-// format() in the paper
-fn simplify<'a>(width: usize, used: usize, docs: List<(usize, Mode, &Doc<'a>)>) -> SDoc<'a> {
-    match docs {
-        List::Nil => SDoc::Nil,
-        List::Cons(head, rest) => match head {
-            (_, _, Doc::Nil) => simplify(width, used, *rest),
-            (i, m, Doc::Cons(a, b)) => simplify(
-                width,
-                used,
-                List::Cons((i, m, a), Box::new(List::Cons((i, m, b), rest))),
+    #[test]
+    fn test_nest() {
+        let doc = DocSeq::from(vec![
+            Doc::text(&"hello-world"),
+            Doc::nest(
+                2,
+                vec![
+                    Doc::space(),
+                    Doc::text(&"foobar"),
+                    Doc::space(),
+                    Doc::text(&"baz"),
+                ],
             ),
-            (i, m, Doc::Nest(j, d)) => simplify(width, used, List::Cons((i + j, m, d), rest)),
-            (_, _, Doc::Text(text)) => {
-                SDoc::Text(*text, Box::new(simplify(width, used + text.length, *rest)))
-            }
-            (_, Mode::Flat, Doc::Break(text)) => {
-                SDoc::Text(*text, Box::new(simplify(width, used + text.length, *rest)))
-            }
-            (i, Mode::Break, Doc::Break(_text)) => {
-                SDoc::Line(i, Box::new(simplify(width, i, *rest)))
-            }
-            // TODO: I don't like clone here
-            (i, _, Doc::Group(d)) => {
-                if fits(width, used, List::Cons((i, Mode::Flat, d), rest.clone())) {
-                    simplify(width, used, List::Cons((i, Mode::Flat, d), rest))
-                } else {
-                    simplify(width, used, List::Cons((i, Mode::Break, d), rest))
-                }
-            }
-        },
+        ]);
+        assert_eq!(doc.to_string(80), "hello-world foobar baz");
+        assert_eq!(doc.to_string(22), "hello-world foobar baz");
+        assert_eq!(doc.to_string(21), "hello-world\n  foobar\n  baz");
+        assert_eq!(doc.to_string(10), "hello-world\n  foobar\n  baz");
     }
-}
 
-pub fn format<'a>(width: usize, doc: &'a Doc<'a>) -> impl std::fmt::Display + 'a {
-    simplify(
-        width,
-        0,
-        List::Cons((0, Mode::Flat, doc), Box::new(List::Nil)),
-    )
+    #[test]
+    fn test_nest_group() {
+        let doc = DocSeq::from(vec![
+            Doc::text(&"hello-world"),
+            Doc::nest(
+                2,
+                vec![
+                    Doc::space(),
+                    Doc::group(vec![Doc::text(&"foobar"), Doc::space(), Doc::text(&"baz")]),
+                ],
+            ),
+        ]);
+        assert_eq!(doc.to_string(80), "hello-world foobar baz");
+        assert_eq!(doc.to_string(22), "hello-world foobar baz");
+        assert_eq!(doc.to_string(21), "hello-world\n  foobar baz");
+        assert_eq!(doc.to_string(12), "hello-world\n  foobar baz");
+        assert_eq!(doc.to_string(11), "hello-world\n  foobar\n  baz");
+        assert_eq!(doc.to_string(10), "hello-world\n  foobar\n  baz");
+    }
+
+    #[test]
+    fn test_bracket() {
+        let doc = DocSeq::from(vec![
+            Doc::text(&"foo"),
+            Doc::text(&"("),
+            Doc::nest(
+                2,
+                vec![
+                    Doc::breakable(&""),
+                    Doc::text(&"100"),
+                    Doc::text(&","),
+                    Doc::space(),
+                    Doc::text(&"200"),
+                    Doc::text(&","),
+                    Doc::space(),
+                    Doc::text(&"300"),
+                ],
+            ),
+            Doc::breakable(&""),
+            Doc::text(&")"),
+        ]);
+        assert_eq!(doc.to_string(80), "foo(100, 200, 300)");
+        assert_eq!(doc.to_string(18), "foo(100, 200, 300)");
+        assert_eq!(doc.to_string(17), "foo(\n  100,\n  200,\n  300\n)");
+        assert_eq!(doc.to_string(10), "foo(\n  100,\n  200,\n  300\n)");
+    }
+
+    #[test]
+    fn test_group_after_long_text() {
+        let doc = DocSeq::from(vec![
+            Doc::text(&"hello-world"),
+            Doc::group(vec![Doc::space(), Doc::text(&"foobar")]),
+        ]);
+        assert_eq!(doc.to_string(10), "hello-world\nfoobar");
+    }
 }
