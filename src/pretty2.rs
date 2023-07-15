@@ -61,7 +61,7 @@ impl DocSeq<'_> {
                     used = seq.do_format(writer, width, initial_used, indent + i, mode)?;
                 }
                 Doc::Group(seq) => {
-                    if seq.fits(width - used).is_ok() {
+                    if used <= width && seq.fits(width - used).is_ok() {
                         used = seq.do_format(writer, width, initial_used, indent, Mode::Flat)?;
                     } else {
                         used = seq.do_format(writer, width, initial_used, indent, Mode::Break)?;
@@ -237,16 +237,19 @@ mod test {
         let doc = DocSeq::from(vec![
             Doc::text(&"foo"),
             Doc::text(&"("),
-            Doc::nest(2, vec![
-                Doc::breakable(&""),
-                Doc::text(&"100"),
-                Doc::text(&","),
-                Doc::space(),
-                Doc::text(&"200"),
-                Doc::text(&","),
-                Doc::space(),
-                Doc::text(&"300"),
-            ]),
+            Doc::nest(
+                2,
+                vec![
+                    Doc::breakable(&""),
+                    Doc::text(&"100"),
+                    Doc::text(&","),
+                    Doc::space(),
+                    Doc::text(&"200"),
+                    Doc::text(&","),
+                    Doc::space(),
+                    Doc::text(&"300"),
+                ],
+            ),
             Doc::breakable(&""),
             Doc::text(&")"),
         ]);
@@ -254,5 +257,14 @@ mod test {
         assert_eq!(doc.to_string(18), "foo(100, 200, 300)");
         assert_eq!(doc.to_string(17), "foo(\n  100,\n  200,\n  300\n)");
         assert_eq!(doc.to_string(10), "foo(\n  100,\n  200,\n  300\n)");
+    }
+
+    #[test]
+    fn test_group_after_long_text() {
+        let doc = DocSeq::from(vec![
+            Doc::text(&"hello-world"),
+            Doc::group(vec![Doc::space(), Doc::text(&"foobar")]),
+        ]);
+        assert_eq!(doc.to_string(10), "hello-world\nfoobar");
     }
 }
