@@ -84,7 +84,7 @@ impl Program {
     pub fn pretty(&self) -> DocSeq<'_> {
         self.definitions
             .iter()
-            .flat_map(|def| [def.pretty(), Doc::breakable(&"")])
+            .flat_map(|def| [def.pretty(), Doc::breakable(&""), Doc::breakable(&"")])
             .collect()
     }
 }
@@ -102,8 +102,7 @@ impl Definition {
     fn pretty(&self) -> Doc<'_> {
         match self {
             Definition::Fun { name, args, body } => Doc::group(vec![
-                Doc::text(&"fun"),
-                Doc::space(),
+                Doc::text(&"fun "),
                 name.pretty(),
                 Doc::text(&"("),
                 Doc::group(vec![
@@ -127,8 +126,7 @@ impl Definition {
                 Doc::text(&")"),
                 Doc::space(),
                 Doc::text(&"{"),
-                Doc::space(),
-                Doc::nest(4, vec![body.pretty()]),
+                Doc::nest(4, vec![Doc::space(), body.pretty()]),
                 Doc::space(),
                 Doc::text(&"}"),
             ]),
